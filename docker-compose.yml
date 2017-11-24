@@ -1,0 +1,131 @@
+version: '3'
+ 
+services:
+ server:
+   image: hardware/mailserver:1.1-stable
+   domainname: dominio.tld
+   hostname: mail
+   restart: always
+   ports:
+     - "25:25" 
+     - "143:143" 
+     - "465:465" 
+     - "587:587" 
+     - "993:993" 
+     - "4190:4190" 
+   environment:
+     - DBPASS=(password_DB)
+     - RSPAMD_PASSWORD=(password_RSPAMD)
+     # se pueden añadir varios dominios separados por comas
+     - ADD_DOMAINS=dominio.tld
+     - DISABLE_DNS_RESOLVER=true
+     - ENABLE_FETCHMAIL=true
+     # Si se quiere tener algún relay
+     - RELAY_NETWORKS=91.134.241.237
+   volumes:
+     - server:/var/mail
+     - certs:/etc/letsencrypt
+   depends_on:
+     - db
+     - redis
+   networks:
+     - back
+     - traefik
+   links: 
+     - db:mariadb
+   labels:
+     - "traefik.backend=mail-spam"
+     - "traefik.frontend.rule=Host:spam.dominio.tld"
+     - "traefik.domain=dominio.tld"
+     - "traefik.docker.network=traefik"
+     - "traefik.port=11334"
+ 
+ postfixadmin:
+   image: hardware/postfixadmin
+   domainname: dominio.tld
+   hostname: mail
+   restart: always
+   environment:
+     - DBPASS=(password_DB)
+   depends_on:
+     - server
+     - db
+   networks:
+     - back
+     - traefik
+   links:
+     - db:mariadb
+     - server:mailserver
+   labels:
+     - "traefik.backend=mail-postfix"
+     - "traefik.frontend.rule=Host:postfix.dominio.tld"
+     - "traefik.domain=dominio.tld"
+     - "traefik.docker.network=traefik"
+     - "traefik.port=8888"
+ 
+ rainloop:
+   image: hardware/rainloop
+   restart: always
+   volumes:
+     - rainloop:/rainloop/data
+   depends_on:
+     - server
+     - db
+   networks:
+     - back
+     - traefik 
+   links:
+     - db:mariadb
+     - server:mailserver
+   labels:
+     - "traefik.backend=mail-webmail"
+     - "traefik.frontend.rule=Host:webmail.dominio.tld"
+     - "traefik.domain=ichasco.com"
+     - "traefik.docker.network=traefik"
+     - "traefik.port=8888"
+ certs:
+   image: xataz/letsencrypt
+   volumes:
+     - certs:/etc/letsencrypt
+   command: "certonly --standalone --rsa-key-size 4096 --agree-tos -m info@dominio.tld -d mail.dominio.tld"
+   ports:
+     - 443:443
+ 
+ db:
+   image: mariadb
+   restart: always
+   environment:
+     - MYSQL_ROOT_PASSWORD=(contraseña_DB_root)
+     - MYSQL_DATABASE=postfix
+     - MYSQL_USER=postfix
+     - MYSQL_PASSWORD=(contraseña_DB)
+   volumes:
+     - db:/var/lib/mysql
+  networks:
+ - back
+ labels:
+ - "traefik.enable=false"
+ 
+redis:
+ image: redis:alpine
+ restart: always
+ command: redis-server --appendonly yes
+ volumes:
+ - redis:/data
+ networks:
+   - back
+ labels:
+   - "traefik.enable=false"
+ 
+volumes:
+  redis:
+  db:
+  rainloop:
+  server:
+  certs:
+ 
+networks:
+  back:
+  traefik:
+    external:
+      name: traefik
